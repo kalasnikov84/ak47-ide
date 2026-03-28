@@ -1,0 +1,33 @@
+[package]
+name = "ak47-ide"
+version = "1.0.0"
+description = "AK47 Python IDE - Fast and Lightweight Code Editor"
+authors = ["AK47 Team"]
+edition = "2021"
+
+[[bin]]
+name = "ak47"
+path = "src/main.rs"
+
+[lib]
+name = "ak47_ide_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["devtools"] }
+tauri-plugin-opener = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-shell = "2"
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true
