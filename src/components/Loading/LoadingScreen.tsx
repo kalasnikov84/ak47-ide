@@ -17,7 +17,7 @@ function generateParticles(count: number) {
   }));
 }
 
-export function LoadingScreen({ duration = 3000, onComplete }: LoadingScreenProps) {
+export function LoadingScreen({ duration = 1500, onComplete }: LoadingScreenProps) {
   const theme = useThemeStore((s) => s.currentTheme);
   const [progress, setProgress] = useState(0);
   const [status, setStatus] = useState('Initializing...');
@@ -37,13 +37,13 @@ export function LoadingScreen({ duration = 3000, onComplete }: LoadingScreenProp
 
     let progressValue = 0;
     const interval = setInterval(() => {
-      progressValue += Math.random() * 10 + 5;
+      progressValue += Math.random() * 15 + 10;
       if (progressValue >= 100) {
         progressValue = 100;
         clearInterval(interval);
       }
       setProgress(progressValue);
-    }, 400);
+    }, 200);
 
     let statusIndex = 0;
     const statusInterval = setInterval(() => {
@@ -51,7 +51,7 @@ export function LoadingScreen({ duration = 3000, onComplete }: LoadingScreenProp
         setStatus(statuses[statusIndex]);
         statusIndex++;
       }
-    }, 400);
+    }, 200);
 
     const timeout = setTimeout(() => {
       setProgress(100);
@@ -59,7 +59,7 @@ export function LoadingScreen({ duration = 3000, onComplete }: LoadingScreenProp
       setIsExiting(true);
       setTimeout(() => {
         onComplete();
-      }, 800);
+      }, 400);
     }, duration);
 
     return () => {

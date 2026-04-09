@@ -28,7 +28,7 @@ fn get_cpu_usage() -> f64 {
     #[cfg(target_os = "linux")]
     {
         let output = Command::new("sh")
-            .args(["-c", "top -bn1 | grep 'Cpu(s)' | sed 's/.*, *\\([0-9.]*\\)%* id.*/\\1/' | awk '{print 100 - $1}'"])
+            .args(["-c", "cat /proc/stat | head -1 | awk '{usage=($2+$4)*100/($2+$4+$5)} END {print usage}'"])
             .output();
         
         if let Ok(output) = output {

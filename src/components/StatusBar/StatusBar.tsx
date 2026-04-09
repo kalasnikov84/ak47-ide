@@ -67,7 +67,7 @@ export function StatusBar() {
       }
     };
 
-    cpuCheckInterval.current = setInterval(checkSystem, 3000);
+    cpuCheckInterval.current = setInterval(checkSystem, 5000);
     checkSystem();
 
     return () => {

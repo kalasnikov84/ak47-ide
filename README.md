@@ -156,4 +156,26 @@ npm run tauri:build
 
 ---
 
+## Tech Stack
+
+### Frontend
+- **React 19** - UI framework
+- **Vite 7** - Build tool
+- **Tailwind CSS 4** - Styling
+- **CodeMirror 6** - Code editor
+- **Zustand** - State management
+- **Lucide React** - Icons
+
+### Backend (Tauri)
+- **Rust** - Core runtime
+- **Tauri 2** - Desktop framework
+- **Pyright** - Python language server
+
+### Build Tools
+- **Node.js 18+** - JavaScript runtime
+- **Cargo** - Rust package manager
+- **npm** - Package management
+
+---
+
 Version: 1.0.0
