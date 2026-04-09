@@ -1,22 +1,19 @@
 use once_cell::sync::Lazy;
-use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::path::PathBuf;
 use std::process::{Command, Stdio, ChildStdin, Child};
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::time::Instant;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::io::{BufRead, BufReader, Write};
+use std::sync::Mutex;
 
 static PYRIGHT_SERVER: Lazy<Mutex<Option<PyrightServer>>> = Lazy::new(|| Mutex::new(None));
 static INITIALIZED: AtomicBool = AtomicBool::new(false);
-static REQUEST_ID: AtomicU32 = AtomicU32::new(1);
 static AUTO_INSTALL_ATTEMPTED: AtomicBool = AtomicBool::new(false);
 
 struct PyrightServer {
-    _child: Child,
-    _stdin: ChildStdin,
+    child: Child,
+    stdin: Mutex<ChildStdin>,
     request_id: Mutex<u32>,
-    last_use: Instant,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,14 +36,6 @@ pub struct CompletionResult {
     pub items: Vec<CompletionItem>,
     #[serde(rename = "isIncomplete")]
     pub is_incomplete: Option<bool>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct JsonRpcRequest {
-    jsonrpc: String,
-    id: u32,
-    method: String,
-    params: Value,
 }
 
 fn get_platform() -> &'static str {
@@ -88,23 +77,17 @@ fn find_pyright_in_common_locations() -> Option<PathBuf> {
     let candidates: Vec<String> = match platform {
         "linux" => vec![
             format!("{}/.local/bin/pyright", home.as_deref().unwrap_or("")),
-            format!("{}/.pyenv/shims/pyright", home.as_deref().unwrap_or("")),
             "/usr/local/bin/pyright".to_string(),
             "/usr/bin/pyright".to_string(),
-            "/opt/pyright/bin/pyright".to_string(),
         ],
         "macos" => vec![
             format!("{}/.local/bin/pyright", home.as_deref().unwrap_or("")),
-            format!("{}/.pyenv/shims/pyright", home.as_deref().unwrap_or("")),
             "/usr/local/bin/pyright".to_string(),
-            format!("{}/Library/Python/*/bin/pyright", home.as_deref().unwrap_or("")),
             "/opt/homebrew/bin/pyright".to_string(),
         ],
         "windows" => vec![
             format!("{}\\.local\\bin\\pyright.bat", home.as_deref().unwrap_or("")),
-            format!("%APPDATA%\\Python\\Scripts\\pyright.bat"),
             "C:\\Python\\Scripts\\pyright.bat".to_string(),
-            "C:\\Program Files\\Pyright\\bin\\pyright.exe".to_string(),
         ],
         _ => vec![],
     };
@@ -124,14 +107,8 @@ fn find_python() -> String {
         return v;
     }
     
-    let python_cmd = if cfg!(target_os = "windows") {
-        "where python"
-    } else {
-        "which python3"
-    };
-    
     let output = Command::new("sh")
-        .args(["-c", python_cmd])
+        .args(["-c", "which python3"])
         .output();
     
     if let Ok(output) = output {
@@ -154,10 +131,10 @@ fn install_pyright() -> Result<(), String> {
     
     let python = find_python();
     
-    let pip_cmd_1 = format!("{} -m pip install pyright", python);
-    let pip_cmd_2 = format!("{} -m pip install --user pyright", python);
-    
-    let commands = vec![pip_cmd_1, pip_cmd_2];
+    let commands = vec![
+        format!("{} -m pip install pyright", python),
+        format!("{} -m pip install --user pyright", python),
+    ];
     
     for cmd in commands {
         let output = Command::new("sh")
@@ -171,31 +148,11 @@ fn install_pyright() -> Result<(), String> {
         }
     }
     
-    if cfg!(target_os = "windows") {
-        let output = Command::new("npm")
-            .args(["install", "-g", "pyright"])
-            .output();
-        
-        if let Ok(output) = output {
-            if output.status.success() {
-                return Ok(());
-            }
-        }
-    }
-    
     Err("Failed to install pyright".to_string())
 }
 
 fn get_pyright_path() -> Option<PathBuf> {
-    if let Some(path) = find_pyright_in_path() {
-        return Some(path);
-    }
-    
-    if let Some(path) = find_pyright_in_common_locations() {
-        return Some(path);
-    }
-    
-    None
+    find_pyright_in_path().or_else(find_pyright_in_common_locations)
 }
 
 pub fn check_pyright_installed() -> bool {
@@ -241,13 +198,12 @@ fn init_server(python_path: Option<String>) -> Result<(), String> {
     let _stdout = child.stdout.take();
 
     let server = PyrightServer {
-        _child: child,
-        _stdin: stdin,
+        child,
+        stdin: Mutex::new(stdin),
         request_id: Mutex::new(1),
-        last_use: Instant::now(),
     };
 
-    let mut guard = PYRIGHT_SERVER.lock();
+    let mut guard = PYRIGHT_SERVER.lock().unwrap();
     *guard = Some(server);
 
     INITIALIZED.store(true, Ordering::SeqCst);
@@ -260,23 +216,27 @@ pub fn open_document(file_path: String, content: String, python_path: Option<Str
         init_server(python_path)?;
     }
 
-    let _params = serde_json::json!({
-        "textDocument": {
-            "uri": format!("file://{}", file_path),
-            "languageId": "python",
-            "version": 1,
-            "text": content
-        }
-    });
-
+    eprintln!("[Pyright] Opened document: {}", file_path);
     Ok(())
 }
 
 pub fn change_document(_file_path: String, _content: String, _version: u32) -> Result<(), String> {
+    if !INITIALIZED.load(Ordering::SeqCst) {
+        return Ok(());
+    }
     Ok(())
 }
 
-pub fn get_completions(_file_path: String, _content: String, _line: u32, _column: u32, _python_path: Option<String>) -> Result<CompletionResult, String> {
+pub fn get_completions(file_path: String, _content: String, line: u32, column: u32, _python_path: Option<String>) -> Result<CompletionResult, String> {
+    if !INITIALIZED.load(Ordering::SeqCst) {
+        return Ok(CompletionResult {
+            items: vec![],
+            is_incomplete: Some(false),
+        });
+    }
+
+    eprintln!("[Pyright] Getting completions for {}:{}:{}", file_path, line, column);
+
     Ok(CompletionResult {
         items: vec![],
         is_incomplete: Some(false),
@@ -288,12 +248,11 @@ pub fn close_document(_file_path: String) -> Result<(), String> {
 }
 
 pub fn shutdown_server() -> Result<(), String> {
-    let mut guard = PYRIGHT_SERVER.lock();
-    if let Some(_server) = guard.take() {
-        // server will be dropped and killed automatically
+    let mut guard = PYRIGHT_SERVER.lock().unwrap();
+    if let Some(mut server) = guard.take() {
+        let _ = server.child.kill();
     }
     
     INITIALIZED.store(false, Ordering::SeqCst);
-    REQUEST_ID.store(1, Ordering::SeqCst);
     Ok(())
 }
