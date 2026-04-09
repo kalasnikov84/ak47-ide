@@ -1,6 +1,8 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useThemeStore } from '../../stores/themeStore';
 import { useEditorStore } from '../../stores/editorStore';
+import { useSettingsStore } from '../../stores/settingsStore';
+import { useToastStore } from '../Toast/ToastContainer';
 import { getFileName } from '../../utils/helpers';
 import { invoke } from '@tauri-apps/api/core';
 import { open } from '@tauri-apps/plugin-dialog';
@@ -35,6 +37,8 @@ interface SidebarProps {
 export function Sidebar({ onOpenFile, width = 260 }: SidebarProps) {
   const theme = useThemeStore((s) => s.currentTheme);
   const globalProjectPath = useEditorStore((s) => s.projectPath);
+  const settings = useSettingsStore((s) => s.settings);
+  const addToast = useToastStore((s) => s.addToast);
   const [files, setFiles] = useState<FileItem[]>([]);
   const [expandedDirs, setExpandedDirs] = useState<string[]>([]);
   const [projectPath, setProjectPath] = useState<string | null>(null);
@@ -98,12 +102,30 @@ export function Sidebar({ onOpenFile, width = 260 }: SidebarProps) {
         const entries = await loadDirectory(selected);
         setFiles(entries);
         setIsLoading(false);
+        
+        if (settings.autoVenv.autoVenv) {
+          try {
+            const venvStatus = await invoke<{ python_venv_exists: boolean; requirements_exists: boolean }>('check_venv_status', { projectPath: selected });
+            if (!venvStatus.python_venv_exists) {
+              addToast({ type: 'info', message: 'Creating virtual environment...' });
+              await invoke('create_python_venv', { projectPath: selected });
+              addToast({ type: 'success', message: 'Virtual environment created!' });
+              if (settings.autoVenv.autoInstall && venvStatus.requirements_exists) {
+                addToast({ type: 'info', message: 'Installing dependencies...' });
+                await invoke('install_python_deps', { projectPath: selected });
+                addToast({ type: 'success', message: 'Dependencies installed!' });
+              }
+            }
+          } catch (e) {
+            console.error('Auto venv error:', e);
+          }
+        }
       }
     } catch (e) {
       console.error('Failed to open folder:', e);
       setIsLoading(false);
     }
-  }, [loadDirectory]);
+  }, [loadDirectory, settings.autoVenv, addToast]);
 
   const createItem = useCallback(async (parentPath: string, isDirectory: boolean) => {
     const name = prompt(isDirectory ? 'Folder name:' : 'File name (e.g., main.py):', isDirectory ? 'new_folder' : 'main.py');

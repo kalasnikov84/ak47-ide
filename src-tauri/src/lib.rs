@@ -7,6 +7,8 @@ use std::process::{Command, Stdio, ChildStdin};
 use std::io::Write;
 use tauri::{AppHandle, Emitter, Manager};
 
+mod pyright;
+
 static CURRENT_CHILD: Mutex<Option<(u32, ChildStdin)>> = Mutex::new(None);
 
 #[tauri::command]
@@ -14,6 +16,250 @@ fn close_app(app: AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.close();
     }
+}
+
+#[tauri::command]
+fn force_close_app() {
+    std::process::exit(1);
+}
+
+#[tauri::command]
+fn get_cpu_usage() -> f64 {
+    #[cfg(target_os = "linux")]
+    {
+        let output = Command::new("sh")
+            .args(["-c", "top -bn1 | grep 'Cpu(s)' | sed 's/.*, *\\([0-9.]*\\)%* id.*/\\1/' | awk '{print 100 - $1}'"])
+            .output();
+        
+        if let Ok(output) = output {
+            if let Ok(s) = String::from_utf8(output.stdout) {
+                if let Ok(usage) = s.trim().parse::<f64>() {
+                    return usage;
+                }
+            }
+        }
+        0.0
+    }
+    
+    #[cfg(target_os = "macos")]
+    {
+        let output = Command::new("sh")
+            .args(["-c", "top -l 1 -n 0 | grep 'CPU usage' | awk '{print $3}' | tr -d '%'"])
+            .output();
+        
+        if let Ok(output) = output {
+            if let Ok(s) = String::from_utf8(output.stdout) {
+                if let Ok(usage) = s.trim().parse::<f64>() {
+                    return usage;
+                }
+            }
+        }
+        0.0
+    }
+    
+    #[cfg(target_os = "windows")]
+    {
+        let output = Command::new("powershell")
+            .args(["-Command", "(Get-Counter '\\Processor(_Total)\\% Processor Time').CounterSamples.CookedValue"])
+            .output();
+        
+        if let Ok(output) = output {
+            if let Ok(s) = String::from_utf8(output.stdout) {
+                if let Ok(usage) = s.trim().parse::<f64>() {
+                    return usage;
+                }
+            }
+        }
+        0.0
+    }
+    
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+        0.0
+    }
+}
+
+#[tauri::command]
+fn get_memory_usage() -> f64 {
+    #[cfg(target_os = "linux")]
+    {
+        let output = Command::new("sh")
+            .args(["-c", "free -m | awk 'NR==2{printf \"%.1f\", $3/$2*100}'"])
+            .output();
+        
+        if let Ok(output) = output {
+            if let Ok(s) = String::from_utf8(output.stdout) {
+                if let Ok(usage) = s.trim().parse::<f64>() {
+                    return usage;
+                }
+            }
+        }
+        0.0
+    }
+    
+    #[cfg(target_os = "macos")]
+    {
+        let output = Command::new("sh")
+            .args(["-c", "vm_stat | grep 'Pages active' | awk '{print $3}' | tr -d '.'"])
+            .output();
+        
+        if let Ok(output) = output {
+            if let Ok(s) = String::from_utf8(output.stdout) {
+                if let Ok(pages) = s.trim().parse::<f64>() {
+                    return (pages * 4096.0 / 8589934592.0) * 100.0;
+                }
+            }
+        }
+        0.0
+    }
+    
+    #[cfg(target_os = "windows")]
+    {
+        let output = Command::new("powershell")
+            .args(["-Command", "$os = Get-CimInstance Win32_OperatingSystem; [math]::Round((($os.TotalVisibleMemorySize - $os.FreePhysicalMemory) / $os.TotalVisibleMemorySize) * 100, 1)"])
+            .output();
+        
+        if let Ok(output) = output {
+            if let Ok(s) = String::from_utf8(output.stdout) {
+                if let Ok(usage) = s.trim().parse::<f64>() {
+                    return usage;
+                }
+            }
+        }
+        0.0
+    }
+    
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
+        0.0
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct SystemInfo {
+    cpu_usage: f64,
+    memory_usage: f64,
+    memory_total_mb: u64,
+    memory_used_mb: u64,
+    is_high_load: bool,
+}
+
+#[tauri::command]
+fn get_system_info() -> SystemInfo {
+    let cpu = get_cpu_usage();
+    let memory = get_memory_usage();
+    
+    let (mem_total, mem_used) = get_memory_info();
+    
+    let is_high_load = cpu > 80.0 || memory > 85.0;
+    
+    SystemInfo {
+        cpu_usage: cpu,
+        memory_usage: memory,
+        memory_total_mb: mem_total,
+        memory_used_mb: mem_used,
+        is_high_load,
+    }
+}
+
+fn get_memory_info() -> (u64, u64) {
+    #[cfg(target_os = "linux")]
+    {
+        let output = Command::new("sh")
+            .args(["-c", "free -m | awk 'NR==2{print $2,$3}'"])
+            .output();
+        
+        if let Ok(output) = output {
+            if let Ok(s) = String::from_utf8(output.stdout) {
+                let parts: Vec<&str> = s.trim().split_whitespace().collect();
+                if parts.len() >= 2 {
+                    let total: u64 = parts[0].parse().unwrap_or(0);
+                    let used: u64 = parts[1].parse().unwrap_or(0);
+                    return (total, used);
+                }
+            }
+        }
+    }
+    
+    #[cfg(target_os = "macos")]
+    {
+        let output = Command::new("sh")
+            .args(["-c", "sysctl -n hw.memsize"])
+            .output();
+        
+        if let Ok(output) = output {
+            if let Ok(s) = String::from_utf8(output.stdout) {
+                let total: u64 = s.trim().parse().unwrap_or(0) / 1024 / 1024;
+                return (total, 0);
+            }
+        }
+    }
+    
+    #[cfg(target_os = "windows")]
+    {
+        let output = Command::new("powershell")
+            .args(["-Command", "(Get-CimInstance Win32_OperatingSystem | Select TotalVisibleMemorySize,FreePhysicalMemory | ConvertTo-Json)"])
+            .output();
+        
+        if let Ok(output) = output {
+            if let Ok(s) = String::from_utf8(output.stdout) {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&s) {
+                    let total = json["TotalVisibleMemorySize"].as_f64().unwrap_or(0.0) / 1024.0;
+                    let free = json["FreePhysicalMemory"].as_f64().unwrap_or(0.0) / 1024.0;
+                    return (total as u64, (total - free) as u64);
+                }
+            }
+        }
+    }
+    
+    (0, 0)
+}
+
+#[tauri::command]
+fn kill_high_cpu_processes(threshold: f64) -> Result<String, String> {
+    let pid = std::process::id();
+    
+    #[cfg(target_os = "linux")]
+    {
+        let output = Command::new("sh")
+            .args(["-c", &format!("ps aux --sort=-%cpu | awk '{{if($3 > {} && $2 != {}) print $2}}' | head -5", threshold, pid)])
+            .output();
+        
+        if let Ok(output) = output {
+            let pids = String::from_utf8_lossy(&output.stdout);
+            if !pids.trim().is_empty() {
+                for p in pids.trim().split('\n') {
+                    let _ = Command::new("kill").arg("-9").arg(p).output();
+                }
+                return Ok(format!("Killed processes with CPU > {}%", threshold));
+            }
+        }
+    }
+    
+    #[cfg(target_os = "macos")]
+    {
+        let output = Command::new("sh")
+            .args(["-c", &format!("ps -eo pid,pcpu | awk '{{if($2 > {} && $1 != {}) print $1}}' | head -5", threshold, pid)])
+            .output();
+        
+        if let Ok(output) = output {
+            let pids = String::from_utf8_lossy(&output.stdout);
+            if !pids.trim().is_empty() {
+                for p in pids.trim().split('\n') {
+                    let _ = Command::new("kill").arg("-9").arg(p).output();
+                }
+                return Ok(format!("Killed processes with CPU > {}%", threshold));
+            }
+        }
+    }
+    
+    #[cfg(target_os = "windows")]
+    {
+        let _ = threshold;
+        return Ok("Process termination not implemented for Windows".to_string());
+    }
+    
+    Ok("No high CPU processes found".to_string())
 }
 
 fn kill_current_process() {
@@ -116,7 +362,7 @@ async fn install_missing_module(app: AppHandle, module_name: String, project_pat
 }
 
 #[tauri::command]
-async fn install_pip_package(app: AppHandle, module_name: String, project_path: String) -> Result<(), String> {
+fn install_pip_package(app: AppHandle, module_name: String, project_path: String) -> Result<(), String> {
     let venv_path = format!("{}/venv", project_path);
     let venv_python = format!("{}/bin/python", venv_path);
     
@@ -161,6 +407,41 @@ async fn install_pip_package(app: AppHandle, module_name: String, project_path: 
     }).ok();
     
     return Ok(());
+}
+
+#[tauri::command]
+fn check_pyright_installed() -> bool {
+    pyright::check_pyright_installed()
+}
+
+#[tauri::command]
+fn check_and_install_pyright() -> bool {
+    pyright::check_and_install_pyright()
+}
+
+#[tauri::command]
+fn pyright_get_completions(file_path: String, content: String, line: u32, column: u32, python_path: Option<String>) -> Result<pyright::CompletionResult, String> {
+    pyright::get_completions(file_path, content, line, column, python_path)
+}
+
+#[tauri::command]
+fn pyright_open_document(file_path: String, content: String, python_path: Option<String>) -> Result<(), String> {
+    pyright::open_document(file_path, content, python_path)
+}
+
+#[tauri::command]
+fn pyright_change_document(file_path: String, content: String, version: u32) -> Result<(), String> {
+    pyright::change_document(file_path, content, version)
+}
+
+#[tauri::command]
+fn pyright_close_document(file_path: String) -> Result<(), String> {
+    pyright::close_document(file_path)
+}
+
+#[tauri::command]
+fn pyright_shutdown() -> Result<(), String> {
+    pyright::shutdown_server()
 }
 
 #[tauri::command]
@@ -607,8 +888,20 @@ pub fn run() {
             init_go_module,
             init_cargo_project,
             close_app,
+            force_close_app,
+            get_cpu_usage,
+            get_memory_usage,
+            get_system_info,
+            kill_high_cpu_processes,
             install_missing_module,
-            install_pip_package
+            install_pip_package,
+            check_pyright_installed,
+            check_and_install_pyright,
+            pyright_get_completions,
+            pyright_open_document,
+            pyright_change_document,
+            pyright_close_document,
+            pyright_shutdown
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

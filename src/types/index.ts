@@ -29,6 +29,10 @@ export interface Settings {
     bracketPairColorization: boolean;
   };
   autoVenv: ProjectSettings;
+  pyright: {
+    enabled: boolean;
+    pythonPath: string;
+  };
   shortcuts: Record<string, string>;
   recentProjects: string[];
 }

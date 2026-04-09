@@ -8,45 +8,65 @@
 
 Хотелось простой IDE без лишнего:
 - Никакой тяжёлой IDE типа PyCharm
-- Никакого VS Code
+- Никакого VS Code  
 - Просто пишешь код и работаешь
 
 Что получилось:
 - Запускается мгновенно
 - Всё что нужно: редактор, терминал, автодополнение
-- Работает на Linux
+- Работает на Linux, Windows, macOS
+- Встроенная защита от зависаний
 
 ## Возможности
 
-![Main](screens/главный.png)
-![Coding](screens/кодинг.png)
-![Settings](screens/настройки.png)
-
-- **Автодополнение** - Python keywords, встроенные функции, методы list/dict/str, магические методы классов, переменные из кода, импорты
+- **Автодополнение** - Pyright для анализа типов + статические подсказки
 - **Терминал** - встроенный вывод, запуск кода одной кнопкой
 - **Темы** - 12 тем (Ayu Dark, Tokyo Night, Catppuccin и др.)
 - **Настройки** - размер шрифта, табы, автосохранение
 - **Файл браузер** - навигация по проекту
+- **Auto Venv** - автоматическое создание виртуального окружения
+- **Мониторинг** - защита от зависаний при высокой нагрузке CPU/RAM
 
-## Установка
+## Быстрый старт
 
-### Linux (Ubuntu/Debian)
-```bash
-sudo dpkg -i "AK47 Python IDE_1.0.0_amd64.deb"
-```
+### Установка зависимостей
 
-### Fedora/RHEL
-```bash
-sudo rpm -i "AK47 Python IDE-1.0.0-1.x86_64.rpm"
-```
+При первом клонировании проекта:
 
-### Из исходников
 ```bash
 git clone https://github.com/kalasnikov84/ak47-ide.git
 cd ak47-ide
 npm install
-npm run tauri dev
 ```
+
+**Автоматически устанавливается:**
+- Pyright (для автодополнения и анализа кода)
+- Все npm зависимости
+
+### Запуск в режиме разработки
+
+```bash
+npm run tauri:dev
+```
+
+### Сборка для продакшена
+
+```bash
+# Linux
+npm run tauri:build:linux
+
+# Windows  
+npm run tauri:build:windows
+
+# Сборка для текущей платформы
+npm run tauri:build
+```
+
+## Требования
+
+- Node.js 18+
+- Python 3.8+
+- Rust (для сборки Tauri)
 
 ## Горячие клавиши
 
@@ -54,7 +74,7 @@ npm run tauri dev
 |---------|---------|
 | Запустить код | F5 |
 | Сохранить | Ctrl+S |
-| Настройки | Ctrl+, |
+| Настройки | ESC |
 | Сменить тему | Ctrl+Shift+T |
 
 ---
@@ -73,35 +93,57 @@ Wanted a simple IDE without the bloat:
 Result:
 - Launches instantly
 - Everything you need: editor, terminal, autocomplete
-- Works everywhere (Linux, Windows)
+- Works on Linux, Windows, macOS
+- Built-in freeze protection
 
 ## Features
 
-- **Autocomplete** - Python keywords, built-in functions, list/dict/str methods, class magic methods, variables from code, imports
+- **Autocomplete** - Pyright for type analysis + static hints
 - **Terminal** - built-in output, run code with one button
 - **Themes** - 12 themes (Ayu Dark, Tokyo Night, Catppuccin, etc.)
 - **Settings** - font size, tabs, autosave
 - **File browser** - navigate through your project
+- **Auto Venv** - automatic virtual environment creation
+- **Monitoring** - freeze protection with CPU/RAM monitoring
 
-## Installation
+## Quick Start
 
-### Linux (Ubuntu/Debian)
-```bash
-sudo dpkg -i "AK47 Python IDE_1.0.0_amd64.deb"
-```
+### Install Dependencies
 
-### Fedora/RHEL
-```bash
-sudo rpm -i "AK47 Python IDE-1.0.0-1.x86_64.rpm"
-```
-
-### From source
 ```bash
 git clone https://github.com/kalasnikov84/ak47-ide.git
 cd ak47-ide
 npm install
-npm run tauri dev
 ```
+
+**Automatically installs:**
+- Pyright (for autocomplete and code analysis)
+- All npm dependencies
+
+### Run in Development
+
+```bash
+npm run tauri:dev
+```
+
+### Build for Production
+
+```bash
+# Linux
+npm run tauri:build:linux
+
+# Windows
+npm run tauri:build:windows
+
+# Current platform
+npm run tauri:build
+```
+
+## Requirements
+
+- Node.js 18+
+- Python 3.8+
+- Rust (for Tauri build)
 
 ## Keyboard Shortcuts
 
@@ -109,7 +151,7 @@ npm run tauri dev
 |--------|----------|
 | Run code | F5 |
 | Save | Ctrl+S |
-| Settings | Ctrl+, |
+| Settings | ESC |
 | Toggle theme | Ctrl+Shift+T |
 
 ---

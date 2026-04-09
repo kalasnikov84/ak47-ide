@@ -22,6 +22,10 @@ const defaultSettings: Settings = {
     autoVenv: false,
     autoInstall: false,
   },
+  pyright: {
+    enabled: true,
+    pythonPath: 'python3',
+  },
   shortcuts: {
     save: 'Ctrl+S',
     run: 'F5',
@@ -41,6 +45,7 @@ interface SettingsState {
   updateAppearance: (partial: Partial<Settings['appearance']>) => void;
   updateEditor: (partial: Partial<Settings['editor']>) => void;
   updateAutoVenv: (partial: Partial<Settings['autoVenv']>) => void;
+  updatePyright: (partial: Partial<Settings['pyright']>) => void;
   addRecentProject: (path: string) => void;
   resetSettings: () => void;
 }
@@ -79,6 +84,15 @@ export const useSettingsStore = create<SettingsState>()(
           settings: {
             ...state.settings,
             autoVenv: { ...state.settings.autoVenv, ...partial },
+          },
+        }));
+      },
+
+      updatePyright: (partial: Partial<Settings['pyright']>) => {
+        set((state) => ({
+          settings: {
+            ...state.settings,
+            pyright: { ...state.settings.pyright, ...partial },
           },
         }));
       },

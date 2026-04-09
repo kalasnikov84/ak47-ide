@@ -21,6 +21,8 @@ dependencies = [
 name = "ak47-ide"
 version = "1.0.0"
 dependencies = [
+ "once_cell",
+ "parking_lot",
  "serde",
  "serde_json",
  "tauri",
@@ -29,6 +31,7 @@ dependencies = [
  "tauri-plugin-fs",
  "tauri-plugin-opener",
  "tauri-plugin-shell",
+ "tokio",
 ]
 
 [[package]]
@@ -4138,6 +4141,7 @@ dependencies = [
  "libc",
  "mio",
  "pin-project-lite",
+ "signal-hook-registry",
  "socket2",
  "windows-sys 0.61.2",
 ]

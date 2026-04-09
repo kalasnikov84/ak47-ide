@@ -15,6 +15,7 @@ import { Settings } from './components/Settings';
 import { ToastContainer } from './components/Toast/ToastContainer';
 import { LoadingScreen } from './components/Loading/LoadingScreen';
 import { WelcomeScreen } from './components/Welcome/WelcomeScreen';
+import { SetupScreen } from './components/Setup';
 import { FileTab } from './types';
 import { getFileName, generateId } from './utils/helpers';
 import { Code2, FolderOpen, Settings as SettingsIcon, Moon, Sun, Play, Square, Keyboard, Sparkles, Cpu } from 'lucide-react';
@@ -35,6 +36,7 @@ function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [isRunning, setIsRunning] = useState(false);
   const [showWelcome, setShowWelcome] = useState(true);
+  const [showSetup, setShowSetup] = useState(true);
 
   const activeTab = getActiveTab();
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -191,6 +193,8 @@ function App() {
 
   const handleLoadingComplete = useCallback(() => setIsLoading(false), []);
 
+  if (showSetup) return <SetupScreen onComplete={() => setShowSetup(false)} />;
+
   if (isLoading) return <LoadingScreen duration={2500} onComplete={handleLoadingComplete} />;
 
   return (
@@ -229,7 +233,7 @@ function App() {
                 )}
                 <div className="h-full w-full rounded-xl overflow-hidden shadow-lg border" style={{ borderColor: theme.colors.border }}>
                   {activeTab ? (
-                    <CodeEditor key={activeTab.id} content={activeTab.content} language={activeTab.language} onChange={handleContentChange} onSave={handleSave} />
+                    <CodeEditor key={activeTab.id} content={activeTab.content} language={activeTab.language} filePath={activeTab.path} onChange={handleContentChange} onSave={handleSave} />
                   ) : (
                     <div className="h-full w-full flex flex-col items-center justify-center p-8" style={{ backgroundColor: theme.editor.bg }}>
                       <div className="absolute inset-0 opacity-30" style={{ background: `radial-gradient(circle at 50% 30%, ${theme.colors.accent}20 0%, transparent 50%)` }} />

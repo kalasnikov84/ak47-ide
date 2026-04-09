@@ -12,7 +12,10 @@
     "tauri:dev": "npm run tauri dev",
     "tauri:build": "npm run tauri build",
     "tauri:build:linux": "npm run tauri build -- --target x86_64-unknown-linux-gnu",
-    "tauri:build:windows": "npm run tauri build -- --target x86_64-pc-windows-msvc"
+    "tauri:build:windows": "npm run tauri build -- --target x86_64-pc-windows-msvc",
+    "tauri:build:macos": "npm run tauri build -- --target aarch64-apple-darwin",
+    "prepare": "node scripts/check-deps.js 2>/dev/null || true",
+    "postinstall": "node scripts/install-deps.js"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.1",

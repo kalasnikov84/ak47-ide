@@ -10,10 +10,35 @@ import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
 import { tags } from '@lezer/highlight';
 import { useThemeStore } from '../../stores/themeStore';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { usePyright } from '../../hooks/usePyright';
+
+function getCompletionTypeName(kind: number | undefined): string {
+  if (!kind) return 'variable';
+  switch (kind) {
+    case 1: return 'keyword';
+    case 2: return 'function';
+    case 3: return 'variable';
+    case 4: return 'class';
+    case 5: return 'interface';
+    case 6: return 'module';
+    case 7: return 'property';
+    case 8: return 'method';
+    case 9: return 'enum';
+    case 10: return 'constant';
+    case 11: return 'string';
+    case 12: return 'number';
+    case 13: return 'boolean';
+    case 14: return 'array';
+    case 15: return 'object';
+    case 16: return 'operator';
+    default: return 'variable';
+  }
+}
 
 interface CodeEditorProps {
   content: string;
   language: string;
+  filePath?: string | null;
   onChange: (content: string) => void;
   onSave?: () => void;
 }
@@ -381,12 +406,14 @@ const PYTHON_METHODS = [
 
 const ALL_COMPLETIONS = [...PYTHON_KEYWORDS, ...PYTHON_BUILTINS, ...PYTHON_METHODS];
 
-export function CodeEditor({ content, language, onChange, onSave }: CodeEditorProps) {
+export function CodeEditor({ content, language, filePath, onChange, onSave }: CodeEditorProps) {
   const editorRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const currentContentRef = useRef(content);
   const theme = useThemeStore((s) => s.currentTheme);
   const settings = useSettingsStore((s) => s.settings);
+  
+  const pyright = usePyright(filePath?.endsWith('.py') ? filePath : null);
 
   const isDarkTheme = theme.name.includes('dark') || 
     ['monokai', 'dracula', 'nord', 'one-dark'].includes(theme.name);
@@ -549,7 +576,7 @@ export function CodeEditor({ content, language, onChange, onSave }: CodeEditorPr
           defaultKeymap: true,
           closeOnBlur: true,
           override: [
-            (context) => {
+            async (context) => {
               const code = context.state.doc.toString();
               const line = context.state.doc.lineAt(context.pos);
               const textBefore = line.text.slice(0, context.pos - line.from);
@@ -568,29 +595,48 @@ export function CodeEditor({ content, language, onChange, onSave }: CodeEditorPr
               if (lastWord.length < 1) return null;
               
               const fromPos = context.pos - lastWord.length;
+              const lineNumber = line.number - 1;
+              const column = lastWord.length;
               
-              const variables = extractVariables(code);
-              const imports = extractImports(code);
-              const inClass = isInsideClass(code, context.pos);
-              const isMagic = lastWord.startsWith('__');
+              let options: { label: string; type: string; detail?: string }[] = [];
               
-              let options = [
-                ...variables,
-                ...imports,
-                ...ALL_COMPLETIONS,
-              ];
-              
-              if (inClass || isMagic) {
+              if (pyright.enabled && pyright.status === 'ready') {
+                try {
+                  const pyrightCompletions = await pyright.requestCompletions(lineNumber, column, code);
+                  if (pyrightCompletions.length > 0) {
+                    options = pyrightCompletions.map(c => ({
+                      label: c.label,
+                      type: getCompletionTypeName(c.kind),
+                      detail: c.detail || c.documentation || '',
+                    }));
+                  }
+                } catch (e) {
+                  console.warn('Pyright completions failed:', e);
+                }
+              } else {
+                const variables = extractVariables(code);
+                const imports = extractImports(code);
+                const inClass = isInsideClass(code, context.pos);
+                const isMagic = lastWord.startsWith('__');
+                
                 options = [
-                  ...options,
-                  ...MAGIC_METHODS,
+                  ...variables,
+                  ...imports,
+                  ...ALL_COMPLETIONS,
                 ];
+                
+                if (inClass || isMagic) {
+                  options = [
+                    ...options,
+                    ...MAGIC_METHODS,
+                  ];
+                }
               }
               
               return {
                 from: fromPos,
                 validFor: /^\w*$/,
-                options: options.filter(k => k.label.toLowerCase().startsWith(lastWord.toLowerCase()))
+                options: options.filter(k => k.label.toLowerCase().startsWith(lastWord.toLowerCase())).slice(0, 20)
               };
             }
           ]
