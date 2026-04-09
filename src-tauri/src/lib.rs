@@ -866,6 +866,8 @@ async fn run_file(app: AppHandle, path: String, auto_venv: bool, auto_install: b
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    std::env::set_var("GTK_THEME", "Adwaita");
+    
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_fs::init())
