@@ -600,7 +600,7 @@ export function CodeEditor({ content, language, filePath, onChange, onSave }: Co
               
               let options: { label: string; type: string; detail?: string }[] = [];
               
-              if (pyright.enabled && pyright.status === 'ready') {
+              if (pyright.enabled && (pyright.status === 'ready' || pyright.status === 'idle')) {
                 try {
                   const pyrightCompletions = await pyright.requestCompletions(lineNumber, column, code);
                   if (pyrightCompletions.length > 0) {
@@ -609,9 +609,38 @@ export function CodeEditor({ content, language, filePath, onChange, onSave }: Co
                       type: getCompletionTypeName(c.kind),
                       detail: c.detail || c.documentation || '',
                     }));
+                  } else {
+                    const variables = extractVariables(code);
+                    const imports = extractImports(code);
+                    const inClass = isInsideClass(code, context.pos);
+                    const isMagic = lastWord.startsWith('__');
+                    
+                    options = [
+                      ...variables,
+                      ...imports,
+                      ...ALL_COMPLETIONS,
+                    ];
+                    
+                    if (inClass || isMagic) {
+                      options = [...options, ...MAGIC_METHODS];
+                    }
                   }
                 } catch (e) {
-                  console.warn('Pyright completions failed:', e);
+                  console.warn('Pyright completions failed, using fallback:', e);
+                  const variables = extractVariables(code);
+                  const imports = extractImports(code);
+                  const inClass = isInsideClass(code, context.pos);
+                  const isMagic = lastWord.startsWith('__');
+                  
+                  options = [
+                    ...variables,
+                    ...imports,
+                    ...ALL_COMPLETIONS,
+                  ];
+                  
+                  if (inClass || isMagic) {
+                    options = [...options, ...MAGIC_METHODS];
+                  }
                 }
               } else {
                 const variables = extractVariables(code);
