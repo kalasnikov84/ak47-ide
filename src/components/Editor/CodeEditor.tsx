@@ -10,30 +10,13 @@ import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
 import { tags } from '@lezer/highlight';
 import { useThemeStore } from '../../stores/themeStore';
 import { useSettingsStore } from '../../stores/settingsStore';
-import { usePyright } from '../../hooks/usePyright';
-
-function getCompletionTypeName(kind: number | undefined): string {
-  if (!kind) return 'variable';
-  switch (kind) {
-    case 1: return 'keyword';
-    case 2: return 'function';
-    case 3: return 'variable';
-    case 4: return 'class';
-    case 5: return 'interface';
-    case 6: return 'module';
-    case 7: return 'property';
-    case 8: return 'method';
-    case 9: return 'enum';
-    case 10: return 'constant';
-    case 11: return 'string';
-    case 12: return 'number';
-    case 13: return 'boolean';
-    case 14: return 'array';
-    case 15: return 'object';
-    case 16: return 'operator';
-    default: return 'variable';
-  }
-}
+import { getPythonCompletions } from '../../utils/completions';
+import {
+  PYTHON_LIST_METHODS,
+  PYTHON_DICT_METHODS,
+  PYTHON_STR_METHODS,
+  getCompletionsForImports,
+} from '../../data/pythonCompletions';
 
 interface CodeEditorProps {
   content: string;
@@ -82,87 +65,63 @@ function createPythonHighlightStyle(isDark: boolean): HighlightStyle {
     { tag: tags.float, color: colors.number },
     { tag: tags.bool, color: colors.keyword },
     { tag: tags.null, color: colors.keyword },
-    { tag: tags.atom, color: colors.keyword },
-    { tag: tags.definition(tags.variableName), color: colors.variable },
-    { tag: tags.macroName, color: colors.decorator },
-    { tag: tags.definition(tags.variableName), color: colors.variable },
-    { tag: tags.special(tags.variableName), color: colors.builtin },
   ]);
 }
 
-function extractVariables(code: string): { label: string; type: string; detail: string }[] {
+function getLocalVariables(code: string): { label: string; type: string; detail: string }[] {
   const variables: { label: string; type: string; detail: string }[] = [];
-  const lines = code.split('\n');
-  
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (trimmed.startsWith('#') || trimmed.startsWith('"""') || trimmed.startsWith("'''")) continue;
-    
-    const assignMatch = trimmed.match(/^([a-zA-Z_]\w*)\s*=/);
-    if (assignMatch) {
-      const varName = assignMatch[1];
-      let varType = 'variable';
-      let detail = 'local variable';
-      
-      const valueMatch = trimmed.match(/=\s*(.+)$/);
-      if (valueMatch) {
-        const value = valueMatch[1];
-        if (value.match(/^["']/)) varType = 'string';
-        else if (value.match(/^\d+\.?\d*$/)) varType = 'number';
-        else if (value === 'True' || value === 'False') varType = 'boolean';
-        else if (value === 'None') varType = 'null';
-        else if (value.startsWith('[')) { varType = 'array'; detail = 'list'; }
-        else if (value.startsWith('{')) { varType = 'object'; detail = 'dict'; }
-        else if (value.includes('(')) { varType = 'function'; detail = 'function call'; }
-      }
-      
-      if (!variables.find(v => v.label === varName)) {
-        variables.push({ label: varName, type: varType, detail });
-      }
-    }
-    
-    const funcMatch = trimmed.match(/^def\s+([a-zA-Z_]\w*)\s*\(/);
-    if (funcMatch && !variables.find(v => v.label === funcMatch[1])) {
-      variables.push({ label: funcMatch[1], type: 'function', detail: 'user defined function' });
-    }
-    
-    const classMatch = trimmed.match(/^class\s+([a-zA-Z_]\w*)/);
-    if (classMatch && !variables.find(v => v.label === classMatch[1])) {
-      variables.push({ label: classMatch[1], type: 'class', detail: 'user defined class' });
-    }
-    
-    const importMatch = trimmed.match(/^import\s+([a-zA-Z_]\w*)/);
-    if (importMatch && !variables.find(v => v.label === importMatch[1])) {
-      variables.push({ label: importMatch[1], type: 'module', detail: 'import' });
-    }
-    
-    const fromImportMatch = trimmed.match(/^from\s+([a-zA-Z_]\w*)\s+import/);
-    if (fromImportMatch && !variables.find(v => v.label === fromImportMatch[1])) {
-      variables.push({ label: fromImportMatch[1], type: 'module', detail: 'from import' });
-    }
-  }
-  
-  return variables;
-}
-
-function extractImports(code: string): { label: string; type: string; detail: string }[] {
-  const imports: { label: string; type: string; detail: string }[] = [];
   const lines = code.split('\n');
   
   for (const line of lines) {
     const trimmed = line.trim();
     if (trimmed.startsWith('#')) continue;
     
-    const fromMatch = trimmed.match(/^from\s+([a-zA-Z_][\w.]*)\s+import\s+(.+)$/);
-    if (fromMatch) {
-      const module = fromMatch[1];
-      const imported = fromMatch[2].split(',').map(s => s.trim()).filter(s => s);
-      for (const name of imported) {
-        const actualName = name.replace(/ as \w+/, '').trim();
-        if (!imports.find(i => i.label === actualName)) {
-          imports.push({ label: actualName, type: 'import', detail: `from ${module}` });
-        }
+    const assignMatch = trimmed.match(/^([a-zA-Z_]\w*)\s*=/);
+    if (assignMatch) {
+      const varName = assignMatch[1];
+      let varType = 'variable';
+      
+      const valueMatch = trimmed.match(/=\s*(.+)$/);
+      if (valueMatch) {
+        const value = valueMatch[1];
+        if (value.startsWith('[')) varType = 'list';
+        else if (value.startsWith('{')) varType = 'dict';
+        else if (value.match(/^["']/)) varType = 'str';
+        else if (value === 'True' || value === 'False') varType = 'bool';
+        else if (value.match(/^\d+\.?\d*$/)) varType = 'number';
+        else if (value.includes('(') && !value.includes('=')) varType = 'function';
       }
+      
+      if (!variables.find(v => v.label === varName)) {
+        variables.push({ label: varName, type: varType, detail: 'local variable' });
+      }
+    }
+    
+    const funcMatch = trimmed.match(/^def\s+([a-zA-Z_]\w*)\s*\(/);
+    if (funcMatch && !variables.find(v => v.label === funcMatch[1])) {
+      variables.push({ label: funcMatch[1], type: 'function', detail: 'function' });
+    }
+    
+    const classMatch = trimmed.match(/^class\s+([a-zA-Z_]\w*)/);
+    if (classMatch && !variables.find(v => v.label === classMatch[1])) {
+      variables.push({ label: classMatch[1], type: 'class', detail: 'class' });
+    }
+  }
+  
+  return variables;
+}
+
+function getLocalImports(code: string): { label: string; module: string }[] {
+  const imports: { label: string; module: string }[] = [];
+  const lines = code.split('\n');
+  
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('#')) continue;
+    
+    const fromMatch = trimmed.match(/^from\s+([a-zA-Z_][\w.]*)\s+import/);
+    if (fromMatch) {
+      imports.push({ label: fromMatch[1], module: fromMatch[1] });
       continue;
     }
     
@@ -172,7 +131,7 @@ function extractImports(code: string): { label: string; type: string; detail: st
       for (const mod of modules) {
         const modName = mod.split('.')[0];
         if (!imports.find(i => i.label === modName)) {
-          imports.push({ label: modName, type: 'module', detail: 'import' });
+          imports.push({ label: modName, module: modName });
         }
       }
     }
@@ -181,239 +140,12 @@ function extractImports(code: string): { label: string; type: string; detail: st
   return imports;
 }
 
-function isInsideClass(code: string, pos: number): boolean {
-  const lines = code.slice(0, pos).split('\n');
-  let indentLevel = 0;
-  
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const line = lines[i].trim();
-    if (line.startsWith('class ')) {
-      const classIndent = lines[i].search(/\S/);
-      if (indentLevel <= classIndent) return true;
-    }
-    if (line.match(/^def\s/)) {
-      const defIndent = lines[i].search(/\S/);
-      if (indentLevel <= defIndent) return false;
-    }
-    if (line && !line.startsWith('#')) {
-      const currentIndent = line.search(/\S/);
-      indentLevel = currentIndent;
-    }
-  }
-  return false;
-}
-
-const MAGIC_METHODS = [
-  { label: '__init__', type: 'method', detail: 'self, *args, **kwargs' },
-  { label: '__str__', type: 'method', detail: 'self' },
-  { label: '__repr__', type: 'method', detail: 'self' },
-  { label: '__len__', type: 'method', detail: 'self' },
-  { label: '__getitem__', type: 'method', detail: 'self, key' },
-  { label: '__setitem__', type: 'method', detail: 'self, key, value' },
-  { label: '__delitem__', type: 'method', detail: 'self, key' },
-  { label: '__call__', type: 'method', detail: 'self, *args, **kwargs' },
-  { label: '__enter__', type: 'method', detail: 'self' },
-  { label: '__exit__', type: 'method', detail: 'self, exc_type, exc_val, exc_tb' },
-  { label: '__iter__', type: 'method', detail: 'self' },
-  { label: '__next__', type: 'method', detail: 'self' },
-  { label: '__contains__', type: 'method', detail: 'self, item' },
-  { label: '__add__', type: 'method', detail: 'self, other' },
-  { label: '__sub__', type: 'method', detail: 'self, other' },
-  { label: '__mul__', type: 'method', detail: 'self, other' },
-  { label: '__truediv__', type: 'method', detail: 'self, other' },
-  { label: '__eq__', type: 'method', detail: 'self, other' },
-  { label: '__ne__', type: 'method', detail: 'self, other' },
-  { label: '__lt__', type: 'method', detail: 'self, other' },
-  { label: '__le__', type: 'method', detail: 'self, other' },
-  { label: '__gt__', type: 'method', detail: 'self, other' },
-  { label: '__ge__', type: 'method', detail: 'self, other' },
-  { label: '__hash__', type: 'method', detail: 'self' },
-  { label: '__setattr__', type: 'method', detail: 'self, name, value' },
-  { label: '__getattr__', type: 'method', detail: 'self, name' },
-  { label: '__delattr__', type: 'method', detail: 'self, name' },
-  { label: '__getattribute__', type: 'method', detail: 'self, name' },
-  { label: '__new__', type: 'method', detail: 'cls, *args, **kwargs' },
-  { label: '__class__', type: 'property', detail: 'class of instance' },
-  { label: '__name__', type: 'property', detail: 'class name' },
-  { label: '__doc__', type: 'property', detail: 'class docstring' },
-  { label: '__module__', type: 'property', detail: 'module name' },
-  { label: '__bases__', type: 'property', detail: 'parent classes' },
-  { label: '__mro__', type: 'property', detail: 'method resolution order' },
-];
-
-const PYTHON_KEYWORDS = [
-  { label: 'if', type: 'keyword' },
-  { label: 'else', type: 'keyword' },
-  { label: 'elif', type: 'keyword' },
-  { label: 'for', type: 'keyword' },
-  { label: 'while', type: 'keyword' },
-  { label: 'def', type: 'keyword', detail: 'define function' },
-  { label: 'class', type: 'keyword', detail: 'define class' },
-  { label: 'return', type: 'keyword' },
-  { label: 'import', type: 'keyword' },
-  { label: 'from', type: 'keyword' },
-  { label: 'as', type: 'keyword' },
-  { label: 'try', type: 'keyword' },
-  { label: 'except', type: 'keyword' },
-  { label: 'finally', type: 'keyword' },
-  { label: 'raise', type: 'keyword' },
-  { label: 'pass', type: 'keyword' },
-  { label: 'break', type: 'keyword' },
-  { label: 'continue', type: 'keyword' },
-  { label: 'with', type: 'keyword' },
-  { label: 'lambda', type: 'keyword' },
-  { label: 'yield', type: 'keyword' },
-  { label: 'global', type: 'keyword' },
-  { label: 'nonlocal', type: 'keyword' },
-  { label: 'assert', type: 'keyword' },
-  { label: 'del', type: 'keyword' },
-  { label: 'in', type: 'keyword' },
-  { label: 'not', type: 'keyword' },
-  { label: 'and', type: 'keyword' },
-  { label: 'or', type: 'keyword' },
-  { label: 'is', type: 'keyword' },
-  { label: 'None', type: 'constant' },
-  { label: 'True', type: 'constant' },
-  { label: 'False', type: 'constant' },
-  { label: 'self', type: 'variable', detail: 'instance reference' },
-];
-
-const PYTHON_BUILTINS = [
-  { label: 'print', type: 'function', detail: 'print(*objects, sep, end, file, flush)' },
-  { label: 'len', type: 'function', detail: 'len(s)' },
-  { label: 'range', type: 'function', detail: 'range(start, stop, step)' },
-  { label: 'str', type: 'function', detail: 'str(object)' },
-  { label: 'int', type: 'function', detail: 'int(x, base)' },
-  { label: 'float', type: 'function', detail: 'float(x)' },
-  { label: 'bool', type: 'function', detail: 'bool(x)' },
-  { label: 'list', type: 'function', detail: 'list(iterable)' },
-  { label: 'dict', type: 'function', detail: 'dict(**kwargs)' },
-  { label: 'set', type: 'function', detail: 'set(iterable)' },
-  { label: 'tuple', type: 'function', detail: 'tuple(iterable)' },
-  { label: 'input', type: 'function', detail: 'input(prompt)' },
-  { label: 'open', type: 'function', detail: 'open(file, mode, ...)' },
-  { label: 'type', type: 'function', detail: 'type(object)' },
-  { label: 'isinstance', type: 'function', detail: 'isinstance(obj, classinfo)' },
-  { label: 'hasattr', type: 'function', detail: 'hasattr(obj, name)' },
-  { label: 'getattr', type: 'function', detail: 'getattr(obj, name, default)' },
-  { label: 'setattr', type: 'function', detail: 'setattr(obj, name, value)' },
-  { label: 'delattr', type: 'function', detail: 'delattr(obj, name)' },
-  { label: 'enumerate', type: 'function', detail: 'enumerate(iterable, start)' },
-  { label: 'zip', type: 'function', detail: 'zip(*iterables)' },
-  { label: 'map', type: 'function', detail: 'map(func, *iterables)' },
-  { label: 'filter', type: 'function', detail: 'filter(function, iterable)' },
-  { label: 'sorted', type: 'function', detail: 'sorted(iterable, key, reverse)' },
-  { label: 'reversed', type: 'function', detail: 'reversed(seq)' },
-  { label: 'sum', type: 'function', detail: 'sum(iterable, start)' },
-  { label: 'min', type: 'function', detail: 'min(arg1, *args, key)' },
-  { label: 'max', type: 'function', detail: 'max(arg1, *args, key)' },
-  { label: 'abs', type: 'function', detail: 'abs(x)' },
-  { label: 'round', type: 'function', detail: 'round(number, ndigits)' },
-  { label: 'pow', type: 'function', detail: 'pow(x, y, z)' },
-  { label: 'divmod', type: 'function', detail: 'divmod(a, b)' },
-  { label: 'ord', type: 'function', detail: 'ord(c)' },
-  { label: 'chr', type: 'function', detail: 'chr(i)' },
-  { label: 'hex', type: 'function', detail: 'hex(i)' },
-  { label: 'oct', type: 'function', detail: 'oct(i)' },
-  { label: 'bin', type: 'function', detail: 'bin(i)' },
-  { label: 'id', type: 'function', detail: 'id(object)' },
-  { label: 'hash', type: 'function', detail: 'hash(object)' },
-  { label: 'repr', type: 'function', detail: 'repr(object)' },
-  { label: 'format', type: 'function', detail: 'format(value, format_spec)' },
-  { label: 'vars', type: 'function', detail: 'vars(object)' },
-  { label: 'dir', type: 'function', detail: 'dir(object)' },
-  { label: 'help', type: 'function', detail: 'help(object)' },
-  { label: 'callable', type: 'function', detail: 'callable(object)' },
-  { label: 'issubclass', type: 'function', detail: 'issubclass(cls, classinfo)' },
-  { label: 'super', type: 'function', detail: 'super() - parent class' },
-  { label: 'property', type: 'function', detail: 'property(fget, fset, fdel, doc)' },
-  { label: 'staticmethod', type: 'function', detail: 'staticmethod(func)' },
-  { label: 'classmethod', type: 'function', detail: 'classmethod(func)' },
-  { label: 'compile', type: 'function', detail: 'compile(source, filename, mode)' },
-  { label: 'eval', type: 'function', detail: 'eval(expression, globals, locals)' },
-  { label: 'exec', type: 'function', detail: 'exec(object, globals, locals)' },
-  { label: '__import__', type: 'function', detail: '__import__(name, globals, locals, fromlist)' },
-];
-
-const PYTHON_METHODS = [
-  { label: 'append', type: 'method', detail: 'list.append(x)' },
-  { label: 'extend', type: 'method', detail: 'list.extend(iterable)' },
-  { label: 'insert', type: 'method', detail: 'list.insert(i, x)' },
-  { label: 'remove', type: 'method', detail: 'list.remove(x)' },
-  { label: 'pop', type: 'method', detail: 'list.pop(i)' },
-  { label: 'clear', type: 'method', detail: 'list.clear()' },
-  { label: 'index', type: 'method', detail: 'list.index(x, start, end)' },
-  { label: 'count', type: 'method', detail: 'list.count(x)' },
-  { label: 'sort', type: 'method', detail: 'list.sort(*, key, reverse)' },
-  { label: 'reverse', type: 'method', detail: 'list.reverse()' },
-  { label: 'copy', type: 'method', detail: 'list.copy()' },
-  { label: 'split', type: 'method', detail: 'str.split(sep, maxsplit)' },
-  { label: 'join', type: 'method', detail: 'str.join(iterable)' },
-  { label: 'strip', type: 'method', detail: 'str.strip([chars])' },
-  { label: 'lstrip', type: 'method', detail: 'str.lstrip([chars])' },
-  { label: 'rstrip', type: 'method', detail: 'str.rstrip([chars])' },
-  { label: 'upper', type: 'method', detail: 'str.upper()' },
-  { label: 'lower', type: 'method', detail: 'str.lower()' },
-  { label: 'capitalize', type: 'method', detail: 'str.capitalize()' },
-  { label: 'title', type: 'method', detail: 'str.title()' },
-  { label: 'replace', type: 'method', detail: 'str.replace(old, new, count)' },
-  { label: 'startswith', type: 'method', detail: 'str.startswith(prefix, start, end)' },
-  { label: 'endswith', type: 'method', detail: 'str.endswith(suffix, start, end)' },
-  { label: 'find', type: 'method', detail: 'str.find(sub, start, end)' },
-  { label: 'rfind', type: 'method', detail: 'str.rfind(sub, start, end)' },
-  { label: 'index', type: 'method', detail: 'str.index(sub, start, end)' },
-  { label: 'rindex', type: 'method', detail: 'str.rindex(sub, start, end)' },
-  { label: 'count', type: 'method', detail: 'str.count(sub, start, end)' },
-  { label: 'isalpha', type: 'method', detail: 'str.isalpha()' },
-  { label: 'isdigit', type: 'method', detail: 'str.isdigit()' },
-  { label: 'isalnum', type: 'method', detail: 'str.isalnum()' },
-  { label: 'isspace', type: 'method', detail: 'str.isspace()' },
-  { label: 'splitlines', type: 'method', detail: 'str.splitlines(keepends)' },
-  { label: 'encode', type: 'method', detail: 'str.encode(encoding, errors)' },
-  { label: 'decode', type: 'method', detail: 'bytes.decode(encoding, errors)' },
-  { label: 'format', type: 'method', detail: 'str.format(*args, **kwargs)' },
-  { label: 'keys', type: 'method', detail: 'dict.keys()' },
-  { label: 'values', type: 'method', detail: 'dict.values()' },
-  { label: 'items', type: 'method', detail: 'dict.items()' },
-  { label: 'get', type: 'method', detail: 'dict.get(key, default)' },
-  { label: 'setdefault', type: 'method', detail: 'dict.setdefault(key, default)' },
-  { label: 'update', type: 'method', detail: 'dict.update(other)' },
-  { label: 'pop', type: 'method', detail: 'dict.pop(key, default)' },
-  { label: 'popitem', type: 'method', detail: 'dict.popitem()' },
-  { label: 'copy', type: 'method', detail: 'dict.copy()' },
-  { label: 'add', type: 'method', detail: 'set.add(elem)' },
-  { label: 'remove', type: 'method', detail: 'set.remove(elem)' },
-  { label: 'discard', type: 'method', detail: 'set.discard(elem)' },
-  { label: 'pop', type: 'method', detail: 'set.pop()' },
-  { label: 'clear', type: 'method', detail: 'set.clear()' },
-  { label: 'union', type: 'method', detail: 'set.union(*others)' },
-  { label: 'intersection', type: 'method', detail: 'set.intersection(*others)' },
-  { label: 'difference', type: 'method', detail: 'set.difference(*others)' },
-  { label: 'symmetric_difference', type: 'method', detail: 'set.symmetric_difference(other)' },
-  { label: 'issubset', type: 'method', detail: 'set.issubset(other)' },
-  { label: 'issuperset', type: 'method', detail: 'set.issuperset(other)' },
-  { label: 'isdisjoint', type: 'method', detail: 'set.isdisjoint(other)' },
-  { label: 'read', type: 'method', detail: 'file.read(size)' },
-  { label: 'readline', type: 'method', detail: 'file.readline(size)' },
-  { label: 'readlines', type: 'method', detail: 'file.readlines(hint)' },
-  { label: 'write', type: 'method', detail: 'file.write(s)' },
-  { label: 'writelines', type: 'method', detail: 'file.writelines(lines)' },
-  { label: 'close', type: 'method', detail: 'file.close()' },
-  { label: 'seek', type: 'method', detail: 'file.seek(pos, whence)' },
-  { label: 'tell', type: 'method', detail: 'file.tell()' },
-  { label: 'flush', type: 'method', detail: 'file.flush()' },
-];
-
-const ALL_COMPLETIONS = [...PYTHON_KEYWORDS, ...PYTHON_BUILTINS, ...PYTHON_METHODS];
-
-export function CodeEditor({ content, language, filePath, onChange, onSave }: CodeEditorProps) {
+export function CodeEditor({ content, language, onChange, onSave }: CodeEditorProps) {
   const editorRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const currentContentRef = useRef(content);
   const theme = useThemeStore((s) => s.currentTheme);
   const settings = useSettingsStore((s) => s.settings);
-  
-  const pyright = usePyright(filePath?.endsWith('.py') ? filePath : null);
 
   const isDarkTheme = theme.name.includes('dark') || 
     ['monokai', 'dracula', 'nord', 'one-dark'].includes(theme.name);
@@ -435,34 +167,23 @@ export function CodeEditor({ content, language, filePath, onChange, onSave }: Co
         caretColor: theme.editor.cursor,
         padding: '16px 0',
         lineHeight: `${settings.appearance.lineHeight}`,
-        letterSpacing: '0.3px',
       },
       '.cm-cursor': {
         borderLeftColor: theme.editor.cursor,
         borderLeftWidth: '3px',
       },
-      '.cm-cursorLayer span': {
-        animation: 'blink 1s step-end infinite',
-      },
       '.cm-selectionBackground, &.cm-focused .cm-selectionBackground, .cm-content ::selection': {
-        backgroundColor: theme.editor.selection,
-      },
-      '.cm-focused .cm-selectionBackground': {
         backgroundColor: theme.editor.selection,
       },
       '.cm-activeLine': {
         backgroundColor: `${theme.editor.selection}40`,
         borderRadius: '4px',
       },
-      '.cm-activeLineGutter': {
-        backgroundColor: `${theme.editor.selection}30`,
-      },
       '.cm-gutters': {
         backgroundColor: theme.editor.gutter,
         color: theme.editor.lineNumber,
         border: 'none',
         borderRight: `1px solid ${theme.colors.border}`,
-        paddingRight: '8px',
       },
       '.cm-lineNumbers .cm-gutterElement': {
         padding: '0 16px 0 12px',
@@ -470,25 +191,10 @@ export function CodeEditor({ content, language, filePath, onChange, onSave }: Co
         fontFamily: `'${settings.appearance.fontFamily}', monospace`,
         fontSize: `${settings.appearance.fontSize - 2}px`,
       },
-      '.cm-lineNumbers .cm-gutterElement:hover': {
-        color: theme.editor.lineNumberActive,
-      },
-      '.cm-foldGutter .cm-gutterElement': {
-        padding: '0 4px',
-        color: theme.colors.textMuted,
-      },
-      '.cm-foldPlaceholder': {
-        backgroundColor: theme.colors.bgTertiary,
-        border: 'none',
-        borderRadius: '4px',
-        padding: '4px 8px',
-        color: theme.colors.textMuted,
-      },
       '.cm-tooltip': {
         backgroundColor: theme.colors.bg,
         border: `1px solid ${theme.colors.border}`,
         borderRadius: '8px',
-        boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
       },
       '.cm-tooltip-autocomplete': {
         '& > ul': {
@@ -511,31 +217,6 @@ export function CodeEditor({ content, language, filePath, onChange, onSave }: Co
         color: theme.colors.textMuted,
         fontStyle: 'italic',
       },
-      '.cm-searchMatch': {
-        backgroundColor: `${theme.colors.warning}50`,
-        outline: `2px solid ${theme.colors.warning}`,
-        borderRadius: '2px',
-      },
-      '.cm-searchMatch.cm-searchMatch-selected': {
-        backgroundColor: theme.editor.selection,
-      },
-      '.cm-matchingBracket': {
-        backgroundColor: `${theme.colors.accent}40`,
-        outline: `2px solid ${theme.colors.accent}`,
-        borderRadius: '4px',
-      },
-      '.cm-panels': {
-        backgroundColor: theme.colors.bgSecondary,
-        borderTop: `1px solid ${theme.colors.border}`,
-        padding: '8px',
-      },
-      '.cm-line': {
-        padding: '0 16px 0 0',
-      },
-      '.cm-scroller': {
-        fontFamily: `'JetBrains Mono', 'Fira Code', 'Consolas', monospace`,
-        lineHeight: `${settings.appearance.lineHeight}`,
-      },
     }, { dark: isDarkTheme });
 
     const updateListener = EditorView.updateListener.of((update) => {
@@ -548,9 +229,7 @@ export function CodeEditor({ content, language, filePath, onChange, onSave }: Co
       }
     });
 
-    const pythonLinter = linter((_view) => {
-      return [];
-    });
+    const pythonLinter = linter(() => []);
 
     const state = EditorState.create({
       doc: content,
@@ -558,114 +237,78 @@ export function CodeEditor({ content, language, filePath, onChange, onSave }: Co
         lineNumbers(),
         highlightActiveLineGutter(),
         highlightActiveLine(),
-        foldGutter({
-          openText: '▼',
-          closedText: '▶',
-        }),
+        foldGutter({ openText: '▼', closedText: '▶' }),
         history(),
         drawSelection(),
         indentOnInput(),
-        highlightSelectionMatches({
-          minSelectionLength: 2,
-        }),
+        highlightSelectionMatches({ minSelectionLength: 2 }),
         closeBrackets(),
         python(),
         autocompletion({ 
           activateOnTyping: true,
-          maxRenderedOptions: 20,
+          maxRenderedOptions: 25,
           defaultKeymap: true,
           closeOnBlur: true,
           override: [
-            async (context) => {
+            (context) => {
               const code = context.state.doc.toString();
               const line = context.state.doc.lineAt(context.pos);
               const textBefore = line.text.slice(0, context.pos - line.from);
+              
+              const dotMatch = textBefore.match(/(\w+)\.(\w*)$/);
+              if (dotMatch) {
+                const objName = dotMatch[1];
+                const prefix = dotMatch[2];
+                const variables = getLocalVariables(code);
+                const variable = variables.find(v => v.label === objName);
+                
+                if (variable) {
+                  let methods: { label: string; type: string; detail: string }[] = [];
+                  if (variable.type === 'list') methods = PYTHON_LIST_METHODS;
+                  else if (variable.type === 'dict') methods = PYTHON_DICT_METHODS;
+                  else if (variable.type === 'str') methods = PYTHON_STR_METHODS;
+                  
+                  const filtered = methods
+                    .filter(m => m.label.toLowerCase().startsWith(prefix.toLowerCase()))
+                    .map(m => ({ label: m.label, type: 'method' as const, detail: m.detail }));
+                  
+                  if (filtered.length > 0) {
+                    return { from: context.pos - prefix.length, validFor: /^\w*$/, options: filtered.slice(0, 20) };
+                  }
+                }
+                
+                const imports = getLocalImports(code);
+                const matchingImport = imports.find(i => i.label === objName || i.module === objName);
+                if (matchingImport) {
+                  const libCompletions = getCompletionsForImports([matchingImport.module]);
+                  const filtered = libCompletions
+                    .filter(c => c.label.toLowerCase().includes(prefix.toLowerCase()))
+                    .map(c => ({ label: c.label.split('.').pop() || c.label, type: c.type, detail: c.detail }));
+                  
+                  if (filtered.length > 0) {
+                    return { from: context.pos - prefix.length, validFor: /^\w*$/, options: filtered.slice(0, 20) };
+                  }
+                }
+              }
+              
               const lastWord = textBefore.match(/[\w]*$/)?.[0] || '';
+              if (lastWord.length < 1) return null;
               
               let inString = false;
               for (let i = 0; i < textBefore.length; i++) {
                 if (textBefore[i] === '"' || textBefore[i] === "'") {
-                  if (i === 0 || textBefore[i-1] !== '\\') {
-                    inString = !inString;
-                  }
+                  if (i === 0 || textBefore[i-1] !== '\\') inString = !inString;
                 }
               }
               if (inString) return null;
               
-              if (lastWord.length < 1) return null;
-              
               const fromPos = context.pos - lastWord.length;
-              const lineNumber = line.number - 1;
-              const column = lastWord.length;
-              
-              let options: { label: string; type: string; detail?: string }[] = [];
-              
-              if (pyright.enabled && (pyright.status === 'ready' || pyright.status === 'idle')) {
-                try {
-                  const pyrightCompletions = await pyright.requestCompletions(lineNumber, column, code);
-                  if (pyrightCompletions.length > 0) {
-                    options = pyrightCompletions.map(c => ({
-                      label: c.label,
-                      type: getCompletionTypeName(c.kind),
-                      detail: c.detail || c.documentation || '',
-                    }));
-                  } else {
-                    const variables = extractVariables(code);
-                    const imports = extractImports(code);
-                    const inClass = isInsideClass(code, context.pos);
-                    const isMagic = lastWord.startsWith('__');
-                    
-                    options = [
-                      ...variables,
-                      ...imports,
-                      ...ALL_COMPLETIONS,
-                    ];
-                    
-                    if (inClass || isMagic) {
-                      options = [...options, ...MAGIC_METHODS];
-                    }
-                  }
-                } catch (e) {
-                  console.warn('Pyright completions failed, using fallback:', e);
-                  const variables = extractVariables(code);
-                  const imports = extractImports(code);
-                  const inClass = isInsideClass(code, context.pos);
-                  const isMagic = lastWord.startsWith('__');
-                  
-                  options = [
-                    ...variables,
-                    ...imports,
-                    ...ALL_COMPLETIONS,
-                  ];
-                  
-                  if (inClass || isMagic) {
-                    options = [...options, ...MAGIC_METHODS];
-                  }
-                }
-              } else {
-                const variables = extractVariables(code);
-                const imports = extractImports(code);
-                const inClass = isInsideClass(code, context.pos);
-                const isMagic = lastWord.startsWith('__');
-                
-                options = [
-                  ...variables,
-                  ...imports,
-                  ...ALL_COMPLETIONS,
-                ];
-                
-                if (inClass || isMagic) {
-                  options = [
-                    ...options,
-                    ...MAGIC_METHODS,
-                  ];
-                }
-              }
+              const completions = getPythonCompletions(code, context.pos, lastWord);
               
               return {
                 from: fromPos,
                 validFor: /^\w*$/,
-                options: options.filter(k => k.label.toLowerCase().startsWith(lastWord.toLowerCase())).slice(0, 20)
+                options: completions.slice(0, 30),
               };
             }
           ]
@@ -685,18 +328,14 @@ export function CodeEditor({ content, language, filePath, onChange, onSave }: Co
               const state = view.state;
               const pos = state.selection.main.head;
               const line = state.doc.lineAt(pos);
-              const tabSize = state.tabSize;
-              
-              const lineStart = line.from;
               const lineText = line.text;
               const spacesBeforeCursor = lineText.match(/^\s*/)?.[0].length || 0;
               
               if (spacesBeforeCursor > 0) {
+                const tabSize = state.tabSize;
                 const removeCount = Math.min(tabSize, spacesBeforeCursor);
-                const newIndent = spacesBeforeCursor - removeCount;
                 view.dispatch({
-                  changes: { from: lineStart, to: lineStart + removeCount, insert: ' '.repeat(newIndent) },
-                  selection: { anchor: pos - removeCount }
+                  changes: { from: line.from, to: line.from + removeCount, insert: ' '.repeat(spacesBeforeCursor - removeCount) },
                 });
                 return true;
               }
@@ -706,26 +345,12 @@ export function CodeEditor({ content, language, filePath, onChange, onSave }: Co
           {
             key: 'Enter',
             run: (view) => {
-              const state = view.state;
-              const pos = state.selection.main.head;
-              const line = state.doc.lineAt(pos);
-              const lineText = line.text;
-              
-              const beforeCursor = lineText.slice(0, pos - line.from);
-              const afterCursor = lineText.slice(pos - line.from);
+              const pos = view.state.selection.main.head;
+              const line = view.state.doc.lineAt(pos);
+              const beforeCursor = line.text.slice(0, pos - line.from);
               
               let indent = beforeCursor.match(/^\s*/)?.[0] || '';
-              
-              if (beforeCursor.trimEnd().endsWith(':')) {
-                indent += '    '; // 4 spaces
-              } else if (beforeCursor.trim() === '' && afterCursor.trim() === '') {
-                return false;
-              } else {
-                const trimmed = beforeCursor.trimEnd();
-                if (trimmed.endsWith('\\')) {
-                  indent += '    ';
-                }
-              }
+              if (beforeCursor.trimEnd().endsWith(':')) indent += '    ';
               
               view.dispatch({
                 changes: { from: pos, insert: '\n' + indent },
@@ -736,10 +361,7 @@ export function CodeEditor({ content, language, filePath, onChange, onSave }: Co
           },
           {
             key: 'Mod-s',
-            run: () => {
-              onSave?.();
-              return true;
-            },
+            run: () => { onSave?.(); return true; },
           },
         ]),
         themeExtension,
@@ -750,18 +372,11 @@ export function CodeEditor({ content, language, filePath, onChange, onSave }: Co
       ],
     });
 
-    const view = new EditorView({
-      state,
-      parent: editorRef.current,
-    });
-
+    const view = new EditorView({ state, parent: editorRef.current });
     viewRef.current = view;
     currentContentRef.current = content;
 
-    return () => {
-      view.destroy();
-      viewRef.current = null;
-    };
+    return () => { view.destroy(); viewRef.current = null; };
   }, [language, settings.appearance.tabSize, settings.appearance.fontSize, settings.appearance.lineHeight, onSave, theme, isDarkTheme]);
 
   useEffect(() => {
@@ -769,22 +384,12 @@ export function CodeEditor({ content, language, filePath, onChange, onSave }: Co
       const currentDoc = viewRef.current.state.doc.toString();
       if (content !== currentDoc && content !== currentContentRef.current) {
         viewRef.current.dispatch({
-          changes: {
-            from: 0,
-            to: currentDoc.length,
-            insert: content,
-          },
+          changes: { from: 0, to: currentDoc.length, insert: content },
         });
         currentContentRef.current = content;
       }
     }
   }, [content]);
 
-  return (
-    <div
-      ref={editorRef}
-      className="h-full w-full overflow-hidden"
-      style={{ backgroundColor: theme.editor.bg }}
-    />
-  );
+  return <div ref={editorRef} className="h-full w-full overflow-hidden" style={{ backgroundColor: theme.editor.bg }} />;
 }
